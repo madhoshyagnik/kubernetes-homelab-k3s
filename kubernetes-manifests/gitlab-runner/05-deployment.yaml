@@ -1,0 +1,58 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab-runner
+  namespace: gitlab-runner
+  labels:
+    app: gitlab-runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gitlab-runner
+  template:
+    metadata:
+      labels:
+        app: gitlab-runner
+    spec:
+      serviceAccountName: gitlab-runner
+      containers:
+        - name: gitlab-runner
+          image: gitlab/gitlab-runner:v17.9.0
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "/scripts/entrypoint.sh"]
+          env:
+            - name: CI_SERVER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-runner-secret
+                  key: CI_SERVER_URL
+            - name: GITLAB_RUNNER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-runner-secret
+                  key: GITLAB_RUNNER_TOKEN
+            - name: RUNNER_NAME
+              value: "k3s-gitlab-runner"
+            - name: RUNNER_CONCURRENCY
+              value: "4"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: etc-gitlab-runner
+              mountPath: /etc/gitlab-runner
+      volumes:
+        - name: scripts
+          configMap:
+            name: gitlab-runner-config
+            defaultMode: 0755
+        - name: etc-gitlab-runner
+          emptyDir: {}

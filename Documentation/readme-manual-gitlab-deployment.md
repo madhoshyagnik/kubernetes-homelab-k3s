@@ -25,6 +25,12 @@ flowchart TD
             PVC_Data[(PVC: gitlab-data\n15Gi)]
             Secret[Secret: gitlab-oauth-secret\nGoogle Client ID & Secret]
         end
+
+        subgraph "Namespace: gitlab-runner"
+            Runner[Pod: gitlab-runner\nManager Daemon]
+            RunnerSecret[Secret: gitlab-runner-secret\nRunner Auth Token]
+            BuildPod["Ephemeral Build Pod\n(Runs CI Job inside container)"]
+        end
     end
 
     User -->|1. Access Web UI /users/sign_in| MetalLB
@@ -34,12 +40,17 @@ flowchart TD
     User -->|4. Redirect to /users/auth/google_oauth2/callback| MetalLB
     Deploy --> Secret
     Deploy --> PVC_Config & PVC_Logs & PVC_Data
+
+    Runner -->|Polls for CI jobs via HTTPS| Deploy
+    Runner --> RunnerSecret
+    Runner -->|K8s RBAC: Spawns ephemeral build pod| BuildPod
 ```
 
 ### Key Design Decisions
 - **Omnibus Container Deployment**: Deploys the official `gitlab/gitlab-ce` image as a single-pod Deployment backed by K3s `local-path` storage. This is far lighter and more stable for homelab environments than the multi-pod microservices Helm chart (which requires 8-16 GB RAM).
 - **Environment-based OmniAuth Secrets**: Google OAuth credentials (`app_id` and `app_secret`) are injected from a Kubernetes `Secret` via `ENV` variables into `GITLAB_OMNIBUS_CONFIG`, keeping secrets out of version control.
 - **MetalLB LoadBalancer Integration**: MetalLB automatically assigns an IP from the pool `192.168.56.200-192.168.56.220` to expose HTTP (port 80) and Git SSH (port 22).
+- **Kubernetes-native GitLab Runner**: Runs as a lightweight Kubernetes pod in its own `gitlab-runner` namespace. Uses the `kubernetes` executor to dynamically schedule isolated build pods per CI/CD job without needing access to the host Docker daemon or socket.
 
 ---
 
@@ -230,7 +241,122 @@ To access admin features:
 
 ---
 
-## 6. Troubleshooting
+## 6. Deploying GitLab Runner (Kubernetes Executor)
+
+In a typical Docker setup, GitLab Runner runs as a container and relies on the host Docker socket (`/var/run/docker.sock`) to spin up sibling containers. In Kubernetes (K3s), GitLab Runner operates natively as a **Kubernetes Pod** using the **Kubernetes executor**.
+
+### How It Works
+1. **Runner Manager Pod**: Runs continuously in the `gitlab-runner` namespace, polling the GitLab server over HTTPS (`https://gitlab.madhoshyagnik.com`) for queued jobs.
+2. **Ephemeral Build Pods**: When a job arrives, the Runner uses its assigned Kubernetes `ServiceAccount` and RBAC permissions to dynamically schedule a new **Build Pod** in the `gitlab-runner` namespace.
+3. **Execution**: The build pod executes the CI/CD job inside the container image specified in `.gitlab-ci.yml` (e.g. `python:3.11`, `node:20`, `alpine:latest`).
+4. **Auto-Cleanup**: Once the job finishes, the build pod is immediately deleted by Kubernetes, keeping cluster resource usage strictly on-demand.
+
+---
+
+### Step 6.1: Create an Instance (Global) Runner in GitLab
+
+An **Instance Runner** (formerly known as a "Shared" or "Global" runner) is managed by administrators and can execute CI/CD jobs across all projects on your GitLab instance.
+
+1. Log in to GitLab as an administrator (`root`).
+2. Open the **Admin Area** by clicking the wrench/admin icon in the left sidebar, or go directly to:
+   ```text
+   https://gitlab.madhoshyagnik.com/admin/runners
+   ```
+3. Click **New instance runner** (blue button in top-right).
+4. Fill in runner details:
+   - **Platform**: `Linux`
+   - **Tags**: Leave blank or add `k3s, homelab, kubernetes`
+   - **Run untagged jobs**: Check this box :white_check_mark: *(Essential so any standard `.gitlab-ci.yml` job without explicit tags runs on this runner)*
+   - **Description**: `k3s-homelab-runner`
+5. Click **Create runner**.
+6. On the next screen, copy the **Runner authentication token** (starts with `glrt-`, e.g. `glrt-t1_abcdef1234567890`).
+
+> [!NOTE]
+> GitLab 16+ uses dedicated runner authentication tokens (`glrt-...`) tied to pre-registered runner records instead of legacy shared registration tokens.
+
+---
+
+### Step 6.2: Configure Runner Secret
+
+The runner manifests are located in [`kubernetes-manifests/gitlab-runner/`](../kubernetes-manifests/gitlab-runner/).
+
+Create or update the Kubernetes Secret with your runner token:
+
+```bash
+kubectl create namespace gitlab-runner --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl create secret generic gitlab-runner-secret \
+  --namespace gitlab-runner \
+  --from-literal=CI_SERVER_URL="https://gitlab.madhoshyagnik.com" \
+  --from-literal=GITLAB_RUNNER_TOKEN="glrt-YOUR_ACTUAL_RUNNER_TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+*(Alternatively, edit [`kubernetes-manifests/gitlab-runner/03-secret.yaml`](../kubernetes-manifests/gitlab-runner/03-secret.yaml) directly before applying).*
+
+---
+
+### Step 6.3: Deploy the Runner
+
+Deploy the GitLab Runner daemon and its RBAC role to your cluster:
+
+```bash
+kubectl apply -k kubernetes-manifests/gitlab-runner/
+```
+
+Verify the Runner pod starts:
+```bash
+kubectl get pods -n gitlab-runner
+```
+
+Inspect runner logs:
+```bash
+kubectl logs -n gitlab-runner deployment/gitlab-runner -f
+```
+
+Expected log output:
+```text
+Configuration loaded                                builds=0 max_builds=4
+Starting multi-runner from /etc/gitlab-runner/config.toml ...
+Initializing executor providers                     builds=0 max_builds=4
+```
+
+In the GitLab Web UI (**Admin Area > CI/CD > Runners**), the runner will now display a green status dot with status **Online**.
+
+---
+
+### Step 6.4: Test CI/CD Pipeline
+
+To verify end-to-end execution, create a test project or add a `.gitlab-ci.yml` file to an existing repository:
+
+```yaml
+stages:
+  - test
+  - build
+
+test-job:
+  stage: test
+  image: alpine:latest
+  script:
+    - echo "Hello from Kubernetes homelab runner!"
+    - uname -a
+    - cat /etc/os-release
+
+build-job:
+  stage: build
+  image: node:20-alpine
+  script:
+    - node --version
+    - echo "Build succeeded in an isolated build pod!"
+```
+
+Push this file and observe:
+1. In GitLab: The pipeline automatically triggers and runs both jobs.
+2. In Kubernetes: Run `kubectl get pods -n gitlab-runner -w` to watch the runner spawn dynamic build pods (`runner-...-concurrent-0-...`), run the containerized steps, and cleanly terminate them.
+
+---
+
+## 7. Troubleshooting
 
 ### `redirect_uri_mismatch` Error
 - **Cause**: The redirect URL sent by GitLab does not match the URL registered in Google Cloud Console.
@@ -240,16 +366,24 @@ To access admin features:
 - **Cause**: GitLab Omnibus requires at least 2.5 GB of free RAM.
 - **Fix**: Check `kubectl describe pod -n gitlab` to see if the worker node ran out of memory. If necessary, adjust `puma['worker_processes'] = 1` or reduce worker thread concurrency in [`04-deployment.yaml`](../kubernetes-manifests/gitlab/04-deployment.yaml).
 
+### Runner Fails with `403 Forbidden` on Job Polling
+- **Cause**: The runner authentication token in `gitlab-runner-secret` is either using the placeholder value or has been revoked in GitLab.
+- **Fix**: Recreate an Instance Runner in `/admin/runners` and update `gitlab-runner-secret` with the new `glrt-...` token, then restart the deployment (`kubectl rollout restart deployment/gitlab-runner -n gitlab-runner`).
+
 ### SSL Certificate Warnings
 - If you are terminating SSL at an external proxy or Ingress, ensure the proxy passes `X-Forwarded-Proto: https` so GitLab generates valid HTTPS links.
 
 ---
 
-## 7. Cleanup
+## 8. Cleanup
 
-To remove the optional GitLab deployment and free up cluster resources:
+To remove the optional GitLab and Runner deployments and free up cluster resources:
 
 ```bash
+# Remove GitLab Runner
+kubectl delete -k kubernetes-manifests/gitlab-runner/
+
+# Remove GitLab Server
 kubectl delete -k kubernetes-manifests/gitlab/
 ```
 
@@ -257,4 +391,6 @@ To also delete persistent data volumes (warning: deletes all repositories and da
 ```bash
 kubectl delete pvc --all -n gitlab
 kubectl delete namespace gitlab
+kubectl delete namespace gitlab-runner
 ```
+

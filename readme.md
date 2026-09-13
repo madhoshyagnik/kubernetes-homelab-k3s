@@ -122,12 +122,12 @@ Access in your browser via your domain (`https://gitlab.madhoshyagnik.com`) or d
 
 ## Optional Workload Deployments
 
-### 1. Manual Deployment: GitLab CE with Google OAuth SSO
+### 1. Manual Deployment: GitLab CE & GitLab Runner
 
-Deploy an optional standalone GitLab CE instance configured with Google OAuth single sign-on and automatic user registration:
+Deploy an optional standalone GitLab CE instance configured with Google OAuth single sign-on, along with a native GitLab Runner using the Kubernetes executor for on-demand CI/CD pipelines:
 
 1. **Configure Google OAuth Credentials**: Add your Google Client ID and Secret to [`kubernetes-manifests/gitlab/02-secret.yaml`](./kubernetes-manifests/gitlab/02-secret.yaml) (or provide via `kubectl create secret`).
-2. **Deploy to cluster**:
+2. **Deploy GitLab Server**:
    ```bash
    kubectl apply -k kubernetes-manifests/gitlab/
    ```
@@ -135,9 +135,12 @@ Deploy an optional standalone GitLab CE instance configured with Google OAuth si
    ```bash
    kubectl get svc -n gitlab gitlab-service
    ```
-4. Access via your configured domain (e.g., `https://gitlab.madhoshyagnik.com`) and sign in directly using Google SSO.
+4. **Deploy GitLab Runner (Optional CI/CD)**: Create an Instance Runner in GitLab Admin Area (`/admin/runners`), configure the runner token, and deploy:
+   ```bash
+   kubectl apply -k kubernetes-manifests/gitlab-runner/
+   ```
 
-> For the comprehensive guide, Google Cloud Console setup, DNS configuration, and troubleshooting, see the [GitLab Manual Deployment Guide](./Documentation/readme-manual-gitlab-deployment.md).
+> For the comprehensive guide, Google Cloud Console setup, DNS configuration, Runner setup, and troubleshooting, see the [GitLab Manual Deployment Guide](./Documentation/readme-manual-gitlab-deployment.md).
 
 ---
 
@@ -188,4 +191,4 @@ For deeper insights and manual step-by-step procedures, check out the [Documenta
 - [Setting Up a Local Multi-Node K3s Cluster](./Documentation/readme-manual-k3s-deployment.md)
 - [Deploying Rancher Manager](./Documentation/readme-manual-rancher-deployment.md)
 - [Deploying KubeVirt and virtctl](./Documentation/kubevirt-virtctl-manual-deployment.md)
-- [Deploying GitLab CE with Google OAuth SSO](./Documentation/readme-manual-gitlab-deployment.md)
+- [Deploying GitLab CE and GitLab Runner](./Documentation/readme-manual-gitlab-deployment.md)
