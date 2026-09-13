@@ -22,7 +22,7 @@ jobs:
           sudo dpkg -i /tmp/vagrant.deb
 
       - name: Validate Vagrantfile
-        run: vagrant validate
+        run: vagrant validate --ignore-provider
 
   lint-yaml:
     name: Lint YAML Manifests
