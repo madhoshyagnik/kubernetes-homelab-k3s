@@ -1,0 +1,75 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitlab-runner-config
+  namespace: gitlab-runner
+data:
+  entrypoint.sh: |
+    #!/bin/bash
+    set -e
+
+    CONFIG_PATH="/etc/gitlab-runner/config.toml"
+
+    if [ -z "$GITLAB_RUNNER_TOKEN" ] || \
+       [ "$GITLAB_RUNNER_TOKEN" = "glrt-YOUR_RUNNER_TOKEN_HERE" ]; then
+      echo "=================================================================="
+      echo "WARNING: GITLAB_RUNNER_TOKEN is unconfigured or using placeholder!"
+      echo ""
+      echo "Please create an Instance Runner in GitLab Admin Area:"
+      echo "  1. Visit: https://gitlab.madhoshyagnik.com/admin/runners"
+      echo "  2. Click 'New instance runner', check 'Run untagged jobs'."
+      echo "  3. Copy the authentication token (starts with glrt-)."
+      echo "  4. Update gitlab-runner-secret via kubectl:"
+      echo "     kubectl create secret generic gitlab-runner-secret \\"
+      echo "       -n gitlab-runner \\"
+      echo "       --from-literal=CI_SERVER_URL=\"https://gitlab.madhoshyagnik.com\" \\"
+      echo "       --from-literal=GITLAB_RUNNER_TOKEN=\"glrt-YOUR_TOKEN\" \\"
+      echo "       --dry-run=client -o yaml | kubectl apply -f -"
+      echo "  5. Restart this runner deployment:"
+      echo "     kubectl rollout restart deploy/gitlab-runner -n gitlab-runner"
+      echo "=================================================================="
+      sleep 30
+      exit 1
+    fi
+
+    mkdir -p /etc/gitlab-runner
+
+    cat <<EOF > "$CONFIG_PATH"
+    concurrent = ${RUNNER_CONCURRENCY:-4}
+    check_interval = ${RUNNER_CHECK_INTERVAL:-5}
+
+    [session_server]
+      session_timeout = 1800
+
+    [[runners]]
+      name = "${RUNNER_NAME:-k3s-gitlab-runner}"
+      url = "${CI_SERVER_URL:-https://gitlab.madhoshyagnik.com}"
+      token = "${GITLAB_RUNNER_TOKEN}"
+      executor = "kubernetes"
+      [runners.custom_build_dir]
+        enabled = false
+      [runners.cache]
+        MaxUploadedArchiveSize = 0
+      [runners.kubernetes]
+        host = ""
+        bearer_token_overwrite_allowed = false
+        image = "${RUNNER_IMAGE:-alpine:latest}"
+        namespace = "gitlab-runner"
+        namespace_overwrite_allowed = ""
+        privileged = false
+        pull_policy = ["if-not-present"]
+        service_account = "gitlab-runner"
+        cpu_request = "100m"
+        cpu_limit = "1000m"
+        memory_request = "128Mi"
+        memory_limit = "1Gi"
+        helper_cpu_request = "50m"
+        helper_cpu_limit = "300m"
+        helper_memory_request = "64Mi"
+        helper_memory_limit = "256Mi"
+    EOF
+
+    echo "GitLab Runner configured successfully for: ${CI_SERVER_URL}"
+    echo "Starting GitLab Runner daemon with Kubernetes executor..."
+    exec gitlab-runner run --config "$CONFIG_PATH"

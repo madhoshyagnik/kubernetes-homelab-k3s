@@ -1,3 +1,6 @@
 .vagrant
 /rancher
 *.tar.gz
+*.secret.local.yaml
+*.runner.local.yaml
+*.env
