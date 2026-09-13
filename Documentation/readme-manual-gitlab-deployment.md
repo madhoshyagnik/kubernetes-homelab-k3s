@@ -243,24 +243,65 @@ To access admin features:
 
 ### 5.1 Bootstrapping Administrator Access (via Pod Exec)
 
-When signing up via Google OAuth 2.0, accounts are automatically created with standard (non-admin) permissions. Because a regular user cannot access `/admin` or promote themselves, **administrative access must be bootstrapped from the cluster using `kubectl exec`**.
+When signing up via Google OAuth 2.0 or local registration, accounts are created with standard (non-admin) permissions. Because a regular user cannot access `/admin` or promote themselves, **administrative access must be bootstrapped from the cluster using `kubectl exec`**.
 
-Choose one of the following methods to establish an administrator account:
+> [!WARNING]
+> **Why `gitlab-rails runner` Hangs on 4GB Homelab Nodes**:
+> GitLab Omnibus uses ~3.5 GB of RAM for Puma, Sidekiq, PostgreSQL, Gitaly, and Redis. Running `gitlab-rails runner` boots an entire *second* full Rails runtime requiring an additional ~1.5 GB of RAM. On VMs with 4 GB RAM and no swap, this causes immediate memory exhaustion, CPU thrashing, and freezes the node/kubelet (causing `kubectl exec` to get stuck).
+>
+> **Always use Method 1 (`gitlab-psql`) below**: It connects directly to the already-running PostgreSQL database, consumes **zero extra memory**, and executes in **under 1 second** without hanging.
 
-#### Method 1: Promote Your Google SSO User to Administrator (Recommended)
-If you already clicked "Sign in with Google" and registered your account, promote that user to an instance administrator with a single command:
+---
+
+#### Method 1: Promote Your Existing User via PostgreSQL (Recommended & Instant)
+This method connects directly to PostgreSQL inside the GitLab container. It uses virtually zero extra memory (~5 MB) and completes instantly.
+
+1. **List all registered users** (run after you have logged in at least once via Google SSO or web registration):
+   ```bash
+   kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- \
+     gitlab-psql -d gitlabhq_production -c "SELECT id, username, email, admin, state FROM users;"
+   ```
+
+2. **Promote your user to Administrator**:
+   ```bash
+   kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- \
+     gitlab-psql -d gitlabhq_production -c "UPDATE users SET admin = true WHERE username = '<your_username>';"
+   ```
+   *(Or promote by email address: `UPDATE users SET admin = true WHERE email LIKE '%your_email%';`)*.
+
+3. **Verify administrative privileges**:
+   ```bash
+   kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- \
+     gitlab-psql -d gitlabhq_production -c "SELECT id, username, email, admin FROM users WHERE admin = true;"
+   ```
+
+4. **Access the Admin Area**:
+   Refresh your GitLab web interface at `https://gitlab.madhoshyagnik.com`. The **Admin Area** wrench icon (`/admin`) will immediately appear in your sidebar navigation.
+
+---
+
+#### Method 2: Log in as the Built-in `root` Administrator (Web UI)
+Every GitLab deployment includes a default built-in superuser named `root`:
+
+1. **Check your configured root password**:
+   The initial root password is set in [`kubernetes-manifests/gitlab/02-secret.yaml`](../kubernetes-manifests/gitlab/02-secret.yaml) via `GITLAB_ROOT_PASSWORD` (default: `Gl_Homelab_2026_xK3s#9`).
+2. **Log in**:
+   Navigate to `https://gitlab.madhoshyagnik.com/users/sign_in` and sign in using:
+   - **Username**: `root`
+   - **Password**: `<Your GITLAB_ROOT_PASSWORD>`
+3. **Promote other accounts**:
+   Once logged in, open **Admin Area (wrench icon) > Overview > Users**, click on your personal account (e.g. Google SSO account), click **Edit**, check **Access level: Administrator**, and click **Save changes**.
+
+---
+
+#### Method 3: Memory-Safe Rails Runner (To Create a Brand-New Admin via CLI)
+If you need to create a dedicated standalone admin user purely from the command line without signing in first, you can use `gitlab-rails runner`. On 4 GB nodes, you **must temporarily pause Puma** to free ~1.5 GB of RAM so the command completes smoothly:
 
 ```bash
-kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner \
-  "user = User.find_by_any_email('your_email@gmail.com') || User.find_by_username('your_username'); user.admin = true; user.save!; puts \"#{user.username} is now an Administrator!\""
-```
-*(Replace `'your_email@gmail.com'` with the email of your Google account, e.g. `'madhosh1yagnik'`)*.
-Once executed, refresh GitLab in your browser. The **Admin Area** wrench icon will now appear in your left sidebar.
+# Step 1: Temporarily pause Puma web server to free up RAM
+kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-ctl stop puma
 
-#### Method 2: Create a Brand New Dedicated Administrator Account
-To create a standalone administrator user with a dedicated username and password directly inside the database:
-
-```bash
+# Step 2: Create the standalone administrator user
 kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner "
 admin = User.new(
   name: 'Homelab Administrator',
@@ -274,21 +315,25 @@ admin.skip_confirmation!
 admin.save!
 puts 'Administrator user created successfully.'
 "
+
+# Step 3: Restart Puma web server
+kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-ctl start puma
 ```
-*(You can immediately log in with `adminuser` and `YourSecureAdminPassword123!` at `/users/sign_in`).*
+*(Once created, you can immediately log in with `adminuser` and `YourSecureAdminPassword123!` at `/users/sign_in`).*
 
-#### Method 3: Retrieve or Reset the Built-in `root` Admin Password
-GitLab comes with a built-in `root` superuser:
+---
 
-- **Retrieve the initial password**:
-  ```bash
-  kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- cat /etc/gitlab/initial_root_password
-  ```
-- **Or reset the root password to a custom password**:
-  ```bash
-  kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner \
-    "user = User.find_by_username('root'); user.password = 'NewSecurePassword123!'; user.password_confirmation = 'NewSecurePassword123!'; user.save!; puts 'Root password updated successfully.'"
-  ```
+#### Homelab Node Tip: Enable Swap on GitLab Worker Node
+To prevent worker node lockups during resource spikes (such as background CI/CD tasks, database migrations, or omnibus reconfigurations), add a 4 GB swapfile to the worker node (`debian2`):
+
+```bash
+sudo fallocate -l 4G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+K3s supports running alongside swap (`--fail-swap-on=false` by default).
 
 ---
 
@@ -364,6 +409,7 @@ Test that your SMTP connection and credentials are valid by sending a test email
 kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner \
   "Notify.test_email('recipient@example.com', 'GitLab SMTP Test', 'Congratulations! Outgoing SMTP email is functioning properly from your K3s GitLab cluster.').deliver_now"
 ```
+*(Ensure swap is active on the node or pause Puma as detailed in Section 5.1 so Rails runner has sufficient headroom).*
 If successful, the recipient mailbox will receive the email with the subject `GitLab SMTP Test`.
 
 ---
