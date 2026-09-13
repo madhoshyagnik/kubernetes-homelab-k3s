@@ -241,34 +241,30 @@ To access admin features:
 
 ---
 
-### 5.1 Creating and Managing Administrator Users
+### 5.1 Bootstrapping Administrator Access (via Pod Exec)
 
-By default, users registering via Google OAuth 2.0 receive standard user permissions. You can grant administrator privileges to an existing user or create a dedicated administrator account:
+When signing up via Google OAuth 2.0, accounts are automatically created with standard (non-admin) permissions. Because a regular user cannot access `/admin` or promote themselves, **administrative access must be bootstrapped from the cluster using `kubectl exec`**.
 
-#### Method 1: Promote a User via Web UI (Recommended)
-1. Log in with the `root` account at `https://gitlab.madhoshyagnik.com/users/sign_in`.
-2. Click the **Admin Area** wrench/shield icon in the left navigation menu (or navigate to `https://gitlab.madhoshyagnik.com/admin`).
-3. Go to **Overview > Users** (`/admin/users`).
-4. Locate your account (e.g. your Google SSO profile), click the user's name or the edit button (`⋮` > **Edit**).
-5. Under the **Access** section, check the box **Access level: Administrator**.
-6. Click **Save changes** at the bottom of the page.
-7. Log out of root and log back in with your Google account. You now have full administrator access to GitLab (the Admin Area wrench icon will appear in the sidebar).
+Choose one of the following methods to establish an administrator account:
 
-#### Method 2: Promote a User via Command Line (CLI)
-Promote any username or email directly into an administrator using a one-liner:
+#### Method 1: Promote Your Google SSO User to Administrator (Recommended)
+If you already clicked "Sign in with Google" and registered your account, promote that user to an instance administrator with a single command:
+
 ```bash
-kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner \
-  "user = User.find_by_username('your_username'); user.admin = true; user.save!"
+kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner \
+  "user = User.find_by_any_email('your_email@gmail.com') || User.find_by_username('your_username'); user.admin = true; user.save!; puts \"#{user.username} is now an Administrator!\""
 ```
-*(Replace `'your_username'` with your GitLab username, e.g. `'madhosh1yagnik'`)*.
+*(Replace `'your_email@gmail.com'` with the email of your Google account, e.g. `'madhosh1yagnik'`)*.
+Once executed, refresh GitLab in your browser. The **Admin Area** wrench icon will now appear in your left sidebar.
 
-#### Method 3: Create a New Dedicated Admin User via CLI
-To generate a completely new administrator user without going through the web UI:
+#### Method 2: Create a Brand New Dedicated Administrator Account
+To create a standalone administrator user with a dedicated username and password directly inside the database:
+
 ```bash
-kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner "
+kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner "
 admin = User.new(
-  name: 'Homelab Admin',
-  username: 'homelab-admin',
+  name: 'Homelab Administrator',
+  username: 'adminuser',
   email: 'admin@madhoshyagnik.com',
   password: 'YourSecureAdminPassword123!',
   password_confirmation: 'YourSecureAdminPassword123!',
@@ -276,9 +272,23 @@ admin = User.new(
 )
 admin.skip_confirmation!
 admin.save!
-puts 'Admin user created successfully.'
+puts 'Administrator user created successfully.'
 "
 ```
+*(You can immediately log in with `adminuser` and `YourSecureAdminPassword123!` at `/users/sign_in`).*
+
+#### Method 3: Retrieve or Reset the Built-in `root` Admin Password
+GitLab comes with a built-in `root` superuser:
+
+- **Retrieve the initial password**:
+  ```bash
+  kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- cat /etc/gitlab/initial_root_password
+  ```
+- **Or reset the root password to a custom password**:
+  ```bash
+  kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner \
+    "user = User.find_by_username('root'); user.password = 'NewSecurePassword123!'; user.password_confirmation = 'NewSecurePassword123!'; user.save!; puts 'Root password updated successfully.'"
+  ```
 
 ---
 
@@ -362,6 +372,11 @@ If successful, the recipient mailbox will receive the email with the subject `Gi
 
 In a typical Docker setup, GitLab Runner runs as a container and relies on the host Docker socket (`/var/run/docker.sock`) to spin up sibling containers. In Kubernetes (K3s), GitLab Runner operates natively as a **Kubernetes Pod** using the **Kubernetes executor**.
 
+> [!IMPORTANT]
+> **Instance Runner = One-Time Global Setup (Cluster-Wide)**
+> - **Zero Per-Project Setup**: An **Instance Runner** is GitLab's official term for a **Global / Shared Runner**. You configure it **only once** for your entire homelab cluster. Any user, group, or repository on the instance immediately has CI/CD runner access out of the box. Individual projects never need their own runners.
+> - **Why Token Generation Is Required Once**: In modern GitLab (v16 & v17+), GitLab deprecated hardcoded static registration tokens for security reasons. An administrator creates the runner record once in the Admin Area so GitLab issues a cryptographic runner authentication token (`glrt-...`). Once deployed, the runner daemon pod stays running in your cluster permanently and executes jobs for all projects.
+
 ### How It Works
 1. **Runner Manager Pod**: Runs continuously in the `gitlab-runner` namespace, polling the GitLab server over HTTPS (`https://gitlab.madhoshyagnik.com`) for queued jobs.
 2. **Ephemeral Build Pods**: When a job arrives, the Runner uses its assigned Kubernetes `ServiceAccount` and RBAC permissions to dynamically schedule a new **Build Pod** in the `gitlab-runner` namespace.
@@ -372,7 +387,7 @@ In a typical Docker setup, GitLab Runner runs as a container and relies on the h
 
 ### Step 7.1: Create an Instance (Global) Runner in GitLab
 
-An **Instance Runner** (formerly known as a "Shared" or "Global" runner) is managed by administrators and can execute CI/CD jobs across all projects on your GitLab instance.
+An **Instance Runner** is managed by administrators and can execute CI/CD jobs across all projects on your GitLab instance.
 
 1. Log in to GitLab as an administrator (`root`).
 2. Open the **Admin Area** by clicking the wrench/admin icon in the left sidebar, or go directly to:
