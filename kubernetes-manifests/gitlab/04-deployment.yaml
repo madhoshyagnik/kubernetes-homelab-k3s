@@ -81,17 +81,21 @@ spec:
               cpu: 2000m
               memory: 3800Mi
           readinessProbe:
-            httpGet:
-              path: /-/readiness
-              port: 80
-            initialDelaySeconds: 90
+            exec:
+              command:
+                - curl
+                - -fsS
+                - http://localhost:80/-/readiness
+            initialDelaySeconds: 60
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 15
           livenessProbe:
-            httpGet:
-              path: /-/liveness
-              port: 80
+            exec:
+              command:
+                - curl
+                - -fsS
+                - http://localhost:80/-/liveness
             initialDelaySeconds: 180
             periodSeconds: 20
             timeoutSeconds: 5
