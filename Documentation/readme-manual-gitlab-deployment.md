@@ -241,7 +241,124 @@ To access admin features:
 
 ---
 
-## 6. Deploying GitLab Runner (Kubernetes Executor)
+### 5.1 Creating and Managing Administrator Users
+
+By default, users registering via Google OAuth 2.0 receive standard user permissions. You can grant administrator privileges to an existing user or create a dedicated administrator account:
+
+#### Method 1: Promote a User via Web UI (Recommended)
+1. Log in with the `root` account at `https://gitlab.madhoshyagnik.com/users/sign_in`.
+2. Click the **Admin Area** wrench/shield icon in the left navigation menu (or navigate to `https://gitlab.madhoshyagnik.com/admin`).
+3. Go to **Overview > Users** (`/admin/users`).
+4. Locate your account (e.g. your Google SSO profile), click the user's name or the edit button (`⋮` > **Edit**).
+5. Under the **Access** section, check the box **Access level: Administrator**.
+6. Click **Save changes** at the bottom of the page.
+7. Log out of root and log back in with your Google account. You now have full administrator access to GitLab (the Admin Area wrench icon will appear in the sidebar).
+
+#### Method 2: Promote a User via Command Line (CLI)
+Promote any username or email directly into an administrator using a one-liner:
+```bash
+kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner \
+  "user = User.find_by_username('your_username'); user.admin = true; user.save!"
+```
+*(Replace `'your_username'` with your GitLab username, e.g. `'madhosh1yagnik'`)*.
+
+#### Method 3: Create a New Dedicated Admin User via CLI
+To generate a completely new administrator user without going through the web UI:
+```bash
+kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner "
+admin = User.new(
+  name: 'Homelab Admin',
+  username: 'homelab-admin',
+  email: 'admin@madhoshyagnik.com',
+  password: 'YourSecureAdminPassword123!',
+  password_confirmation: 'YourSecureAdminPassword123!',
+  admin: true
+)
+admin.skip_confirmation!
+admin.save!
+puts 'Admin user created successfully.'
+"
+```
+
+---
+
+## 6. Configuring SMTP Email (Outgoing Notifications)
+
+GitLab sends email alerts for pipeline failures, user mentions, password resets, and merge request updates. Outgoing mail can be configured with any standard SMTP provider (Google Workspace / Gmail, SendGrid, Brevo, Mailgun, Amazon SES).
+
+### Step 6.1: Set SMTP Credentials in Secret
+
+SMTP settings are managed in [`kubernetes-manifests/gitlab/02-secret.yaml`](../kubernetes-manifests/gitlab/02-secret.yaml) or created via `kubectl`:
+
+```bash
+kubectl create secret generic gitlab-oauth-secret \
+  --namespace gitlab \
+  --from-literal=GOOGLE_CLIENT_ID="<YOUR_CLIENT_ID>" \
+  --from-literal=GOOGLE_CLIENT_SECRET="<YOUR_CLIENT_SECRET>" \
+  --from-literal=GITLAB_ROOT_PASSWORD="<YOUR_ROOT_PASSWORD>" \
+  --from-literal=SMTP_ENABLED="true" \
+  --from-literal=SMTP_ADDRESS="smtp.gmail.com" \
+  --from-literal=SMTP_PORT="587" \
+  --from-literal=SMTP_USER_NAME="your_email@gmail.com" \
+  --from-literal=SMTP_PASSWORD="<YOUR_APP_PASSWORD>" \
+  --from-literal=SMTP_DOMAIN="smtp.gmail.com" \
+  --from-literal=SMTP_AUTHENTICATION="login" \
+  --from-literal=SMTP_FROM_EMAIL="gitlab@madhoshyagnik.com" \
+  --from-literal=SMTP_DISPLAY_NAME="GitLab Homelab" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+### Step 6.2: Provider Configuration Examples
+
+#### A. Gmail / Google Workspace (Using App Password)
+1. Ensure **2-Step Verification** is turned on in your Google Account.
+2. Navigate to [Google Account > Security > App Passwords](https://myaccount.google.com/apppasswords).
+3. Create an App password with name `GitLab Homelab`. Copy the generated 16-character code (e.g. `abcd efgh ijkl mnop`).
+4. Configure parameters:
+   - `SMTP_ADDRESS`: `"smtp.gmail.com"`
+   - `SMTP_PORT`: `"587"`
+   - `SMTP_USER_NAME`: `"your_email@gmail.com"`
+   - `SMTP_PASSWORD`: `"abcdefghijklmnop"` (no spaces)
+   - `SMTP_DOMAIN`: `"smtp.gmail.com"`
+   - `SMTP_AUTHENTICATION`: `"login"`
+   - `SMTP_FROM_EMAIL`: `"your_email@gmail.com"` (or your authenticated alias)
+
+#### B. SendGrid
+- `SMTP_ADDRESS`: `"smtp.sendgrid.net"`
+- `SMTP_PORT`: `"587"`
+- `SMTP_USER_NAME`: `"apikey"`
+- `SMTP_PASSWORD`: `"<YOUR_SENDGRID_API_KEY>"`
+- `SMTP_DOMAIN`: `"madhoshyagnik.com"`
+- `SMTP_AUTHENTICATION`: `"plain"`
+
+#### C. Brevo (formerly Sendinblue)
+- `SMTP_ADDRESS`: `"smtp-relay.brevo.com"`
+- `SMTP_PORT`: `"587"`
+- `SMTP_USER_NAME`: `"<YOUR_BREVO_LOGIN_EMAIL>"`
+- `SMTP_PASSWORD`: `"<YOUR_BREVO_SMTP_KEY>"`
+- `SMTP_DOMAIN`: `"madhoshyagnik.com"`
+- `SMTP_AUTHENTICATION`: `"login"`
+
+### Step 6.3: Apply Changes & Reload GitLab
+
+Apply the updated deployment manifest and restart the GitLab pod:
+```bash
+kubectl apply -k kubernetes-manifests/gitlab/
+kubectl rollout restart deployment/gitlab -n gitlab
+```
+
+### Step 6.4: Test Email Delivery via CLI
+
+Test that your SMTP connection and credentials are valid by sending a test email directly from Rails:
+```bash
+kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner \
+  "Notify.test_email('recipient@example.com', 'GitLab SMTP Test', 'Congratulations! Outgoing SMTP email is functioning properly from your K3s GitLab cluster.').deliver_now"
+```
+If successful, the recipient mailbox will receive the email with the subject `GitLab SMTP Test`.
+
+---
+
+## 7. Deploying GitLab Runner (Kubernetes Executor)
 
 In a typical Docker setup, GitLab Runner runs as a container and relies on the host Docker socket (`/var/run/docker.sock`) to spin up sibling containers. In Kubernetes (K3s), GitLab Runner operates natively as a **Kubernetes Pod** using the **Kubernetes executor**.
 
@@ -253,7 +370,7 @@ In a typical Docker setup, GitLab Runner runs as a container and relies on the h
 
 ---
 
-### Step 6.1: Create an Instance (Global) Runner in GitLab
+### Step 7.1: Create an Instance (Global) Runner in GitLab
 
 An **Instance Runner** (formerly known as a "Shared" or "Global" runner) is managed by administrators and can execute CI/CD jobs across all projects on your GitLab instance.
 
@@ -276,7 +393,7 @@ An **Instance Runner** (formerly known as a "Shared" or "Global" runner) is mana
 
 ---
 
-### Step 6.2: Configure Runner Secret
+### Step 7.2: Configure Runner Secret
 
 The runner manifests are located in [`kubernetes-manifests/gitlab-runner/`](../kubernetes-manifests/gitlab-runner/).
 
@@ -296,7 +413,7 @@ kubectl create secret generic gitlab-runner-secret \
 
 ---
 
-### Step 6.3: Deploy the Runner
+### Step 7.3: Deploy the Runner
 
 Deploy the GitLab Runner daemon and its RBAC role to your cluster:
 
@@ -325,7 +442,7 @@ In the GitLab Web UI (**Admin Area > CI/CD > Runners**), the runner will now dis
 
 ---
 
-### Step 6.4: Test CI/CD Pipeline
+### Step 7.4: Test CI/CD Pipeline
 
 To verify end-to-end execution, create a test project or add a `.gitlab-ci.yml` file to an existing repository:
 
@@ -356,7 +473,7 @@ Push this file and observe:
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 ### `redirect_uri_mismatch` Error
 - **Cause**: The redirect URL sent by GitLab does not match the URL registered in Google Cloud Console.
@@ -375,7 +492,7 @@ Push this file and observe:
 
 ---
 
-## 8. Cleanup
+## 9. Cleanup
 
 To remove the optional GitLab and Runner deployments and free up cluster resources:
 
