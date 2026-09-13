@@ -96,6 +96,15 @@ Map the GitLab domain to your MetalLB LoadBalancer IP on your host machine (or y
    ```
    *(Replace `192.168.56.202` with the actual IP assigned by MetalLB to `gitlab-service` once deployed).*
 
+### Alternative: Cloudflare Tunnel Routing (Recommended for Public Access)
+If exposing GitLab to the internet via Cloudflare Tunnel (`cloudflared`):
+1. In the **Cloudflare Zero Trust Dashboard**, navigate to **Networks > Tunnels > Public Hostnames**.
+2. Add a public hostname:
+   - **Public hostname**: `gitlab.madhoshyagnik.com`
+   - **Service Type**: `HTTP`
+   - **URL**: `192.168.56.202:80` *(or `http://192.168.56.202:80`)*
+3. Cloudflare terminates SSL at the edge and securely proxies HTTP traffic locally to port 80. GitLab handles the rest, generating all canonical links and Google OAuth redirects using `https://gitlab.madhoshyagnik.com`.
+
 ---
 
 ## 3. Configure Kubernetes Manifests
@@ -206,7 +215,7 @@ gitlab-service   LoadBalancer   10.43.120.45   192.168.56.202   80:31234/TCP,22:
 ```
 
 ### Log In with Google
-1. Open your browser and navigate to `https://gitlab.madhoshyagnik.space` (or `http://192.168.56.202` if testing via direct IP).
+1. Open your browser and navigate to `https://gitlab.madhoshyagnik.com` (or `http://192.168.56.202` if testing via direct IP).
 2. On the sign-in page, click the **Google** login button.
 3. Sign in with your Google Account and grant permissions.
 4. GitLab will authenticate you, automatically create your GitLab profile, and log you in immediately.
