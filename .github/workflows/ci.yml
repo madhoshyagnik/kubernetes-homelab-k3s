@@ -18,7 +18,8 @@ jobs:
 
       - name: Set up Vagrant
         run: |
-          sudo apt-get update && sudo apt-get install -y vagrant
+          wget -q -O /tmp/vagrant.deb https://releases.hashicorp.com/vagrant/2.4.1/vagrant_2.4.1-1_amd64.deb
+          sudo dpkg -i /tmp/vagrant.deb
 
       - name: Validate Vagrantfile
         run: vagrant validate
