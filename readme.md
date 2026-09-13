@@ -26,6 +26,7 @@ graph TD
 
         subgraph Workloads
             OTel[OpenTelemetry Demo]
+            GitLab[GitLab CE with Google SSO]
         end
     end
 
@@ -38,10 +39,12 @@ graph TD
     Ansible -->|Deploys K3s & Services| CP
 
     Helm -->|Manually Deploys| OTel
+    kubectl -->|Optionally Deploys| GitLab
 
     MetalLB -.->|Exposes Services| Rancher
     MetalLB -.->|Exposes Services| KubeVirt
     MetalLB -.->|Exposes Services| OTel
+    MetalLB -.->|Exposes Services| GitLab
 
     User -->|Access via LoadBalancer IPs| MetalLB
 ```
@@ -109,7 +112,28 @@ Access via `http://<KUBEVIRT_MANAGER_IP>`.
 
 ---
 
-## Manual Deployment: OpenTelemetry Demo
+## Optional Workload Deployments
+
+### 1. Manual Deployment: GitLab CE with Google OAuth SSO
+
+Deploy an optional standalone GitLab CE instance configured with Google OAuth single sign-on and automatic user registration:
+
+1. **Configure Google OAuth Credentials**: Add your Google Client ID and Secret to [`kubernetes-manifests/gitlab/02-secret.yaml`](./kubernetes-manifests/gitlab/02-secret.yaml) (or provide via `kubectl create secret`).
+2. **Deploy to cluster**:
+   ```bash
+   kubectl apply -k kubernetes-manifests/gitlab/
+   ```
+3. **Verify LoadBalancer IP**:
+   ```bash
+   kubectl get svc -n gitlab gitlab-service
+   ```
+4. Access via your configured domain (e.g., `https://gitlab.madhoshyagnik.com`) and sign in directly using Google SSO.
+
+> For the comprehensive guide, Google Cloud Console setup, DNS configuration, and troubleshooting, see the [GitLab Manual Deployment Guide](./Documentation/readme-manual-gitlab-deployment.md).
+
+---
+
+### 2. Manual Deployment: OpenTelemetry Demo
 
 To deploy the OpenTelemetry Demo manually to your cluster, run the following Helm commands. 
 

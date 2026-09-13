@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gitlab-ingress
+  namespace: gitlab
+  annotations:
+    # Traefik is default ingress controller in K3s
+    traefik.ingress.kubernetes.io/router.entrypoints: web, websecure
+    # cert-manager.io/cluster-issuer: letsencrypt-prod # Uncomment if using cert-manager
+spec:
+  rules:
+    - host: gitlab.madhoshyagnik.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gitlab-service
+                port:
+                  number: 80
+  # tls:
+  #   - hosts:
+  #       - gitlab.madhoshyagnik.com
+  #     secretName: gitlab-tls-secret
