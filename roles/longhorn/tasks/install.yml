@@ -1,0 +1,30 @@
+---
+- name: Add Longhorn Helm repository
+  ansible.builtin.command: >
+    helm repo add longhorn https://charts.longhorn.io
+  changed_when: false
+
+- name: Update Helm repositories
+  ansible.builtin.command: helm repo update
+  changed_when: false
+
+- name: Install Longhorn via Helm
+  ansible.builtin.command: >
+    helm upgrade --install longhorn longhorn/longhorn
+    --namespace {{ longhorn_namespace }}
+    --create-namespace
+    --version {{ longhorn_version }}
+    --set defaultSettings.defaultReplicaCount={{ longhorn_replica_count }}
+    --set persistence.defaultClassReplicaCount={{ longhorn_replica_count }}
+  changed_when: true
+
+- name: Wait for Longhorn driver deployer rollout
+  ansible.builtin.command: >
+    kubectl rollout status deployment/longhorn-driver-deployer
+    --namespace {{ longhorn_namespace }}
+    --timeout=300s
+  register: deployer_rollout
+  retries: 5
+  delay: 10
+  until: deployer_rollout.rc == 0
+  changed_when: false

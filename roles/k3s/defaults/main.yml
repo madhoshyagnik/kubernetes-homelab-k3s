@@ -10,3 +10,11 @@ packages:
   - vim
   - htop
   - jq
+  - open-iscsi
+  - cryptsetup
+
+# Kubeconfig management
+kubeconfig_local_dest: "{{ lookup('env', 'HOME') }}/.kube/k3s-local.yaml"
+kubeconfig_default_dest: "{{ lookup('env', 'HOME') }}/.kube/config"
+sync_to_default_kubeconfig: true
+backup_existing_kubeconfig: true

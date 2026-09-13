@@ -1,0 +1,6 @@
+---
+# Defaults for Longhorn distributed block storage
+longhorn_namespace: "longhorn-system"
+longhorn_version: "1.7.2"
+longhorn_replica_count: 2
+longhorn_expose_ui: true

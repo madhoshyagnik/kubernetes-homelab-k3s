@@ -75,14 +75,23 @@ This repository provisions a fully functional, multi-node K3s Kubernetes cluster
 This provisions the VMs as defined in the `Vagrantfile`.
 
 ```bash
+# Standard sizing (Default): 1 Control Plane (6GB RAM) + 4 Workers (4GB RAM each)
 vagrant up
+
+# Resource-constrained hosts (e.g. 16GB RAM machines):
+LAB_WORKERS=2 LAB_WORKER_RAM=2048 LAB_CP_RAM=4096 vagrant up
 ```
 
 ### 2. Deploy the Cluster & Addons
-The Ansible playbook will install K3s, configure the cluster, copy the kubeconfig to your host, and automatically install the addons (MetalLB, Rancher, and KubeVirt).
+The Ansible playbook installs K3s, configures the cluster, safely creates a timestamped backup of your existing `~/.kube/config`, writes a dedicated cluster configuration to `~/.kube/k3s-local.yaml`, and automatically deploys essential addons (MetalLB, Rancher, and KubeVirt).
 
 ```bash
 ansible-playbook -i inventory/inventory.yaml playbooks/deploy-k3s.yaml
+```
+
+To isolate this cluster from your default kubeconfig context:
+```bash
+export KUBECONFIG=~/.kube/k3s-local.yaml
 ```
 
 *Note: The playbook is idempotent. You can safely re-run it if something fails.*
@@ -134,6 +143,23 @@ kubectl patch svc frontend-proxy -p '{"spec":{"type":"LoadBalancer"}}'
 kubectl get svc frontend-proxy -n default
 ```
 Then access it via `http://<EXTERNAL_IP>:8080`.
+
+---
+
+## Optional Storage: Longhorn Distributed Block Storage
+
+To deploy Longhorn for cross-node storage replication, volume snapshots, and failover resilience:
+
+```bash
+ansible-playbook -i inventory/inventory.yaml playbooks/deploy-longhorn.yaml
+```
+
+Once running, access the web dashboard via its assigned MetalLB IP:
+```bash
+kubectl get svc longhorn-frontend -n longhorn-system
+```
+
+> For architectural details, storage verification, and manual Helm commands, see the [Longhorn Deployment Guide](./Documentation/readme-manual-longhorn-deployment.md).
 
 ---
 

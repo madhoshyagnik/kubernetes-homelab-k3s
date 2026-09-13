@@ -1,0 +1,25 @@
+---
+- name: Expose Longhorn UI via MetalLB LoadBalancer
+  ansible.builtin.command: >
+    kubectl patch svc longhorn-frontend
+    -n {{ longhorn_namespace }}
+    -p '{"spec":{"type":"LoadBalancer"}}'
+  when: longhorn_expose_ui | bool
+  changed_when: true
+
+- name: Retrieve Longhorn UI LoadBalancer IP
+  ansible.builtin.command: >
+    kubectl get svc longhorn-frontend
+    -n {{ longhorn_namespace }}
+    -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+  register: longhorn_ip
+  retries: 12
+  delay: 5
+  until: longhorn_ip.stdout | length > 0
+  when: longhorn_expose_ui | bool
+  changed_when: false
+
+- name: Display Longhorn UI Access URL
+  ansible.builtin.debug:
+    msg: "Longhorn UI is accessible at: http://{{ longhorn_ip.stdout }}"
+  when: longhorn_expose_ui | bool

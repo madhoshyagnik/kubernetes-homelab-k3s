@@ -4,7 +4,7 @@
   register: nodes
   retries: 20
   delay: 5
-  until: nodes.stdout_lines | length == 5
+  until: nodes.stdout_lines | length == groups['k3s'] | length
   changed_when: false
 
 - name: Taint control plane
@@ -30,19 +30,56 @@
     state: directory
     mode: "0755"
 
-- name: Fetch kubeconfig to localhost
+- name: Check if default kubeconfig exists on host
+  delegate_to: localhost
+  become: false
+  ansible.builtin.stat:
+    path: "{{ kubeconfig_default_dest }}"
+  register: existing_kubeconfig
+
+- name: Create backup of existing default kubeconfig
+  delegate_to: localhost
+  become: false
+  ansible.builtin.copy:
+    src: "{{ kubeconfig_default_dest }}"
+    dest: "{{ kubeconfig_default_dest }}.bak.{{ ansible_date_time.iso8601_basic_short | default('prev') }}"
+    mode: "0600"
+    remote_src: true
+  when:
+    - existing_kubeconfig.stat.exists
+    - backup_existing_kubeconfig | bool
+
+- name: Fetch dedicated cluster kubeconfig to localhost
   ansible.builtin.fetch:
     src: /home/vagrant/k3s.yaml
-    dest: "{{ lookup('env', 'HOME') }}/.kube/config"
+    dest: "{{ kubeconfig_local_dest }}"
     flat: true
 
-- name: Update kubeconfig server address
+- name: Update cluster address in dedicated kubeconfig
   delegate_to: localhost
   become: false
   ansible.builtin.replace:
-    path: "{{ lookup('env', 'HOME') }}/.kube/config"
+    path: "{{ kubeconfig_local_dest }}"
     regexp: '127\.0\.0\.1'
     replace: "{{ k3s_server_ip }}"
+
+- name: Sync dedicated kubeconfig to default kubeconfig
+  delegate_to: localhost
+  become: false
+  ansible.builtin.copy:
+    src: "{{ kubeconfig_local_dest }}"
+    dest: "{{ kubeconfig_default_dest }}"
+    mode: "0600"
+  when: sync_to_default_kubeconfig | bool
+
+- name: Display kubeconfig instructions
+  delegate_to: localhost
+  become: false
+  ansible.builtin.debug:
+    msg:
+      - "Cluster kubeconfig saved to: {{ kubeconfig_local_dest }}"
+      - "To use this cluster explicitly without altering your default context:"
+      - "  export KUBECONFIG={{ kubeconfig_local_dest }}"
 
 - name: Verify cluster nodes
   ansible.builtin.command: kubectl get nodes -o wide
