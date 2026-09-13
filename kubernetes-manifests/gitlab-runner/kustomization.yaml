@@ -5,6 +5,6 @@ kind: Kustomization
 resources:
   - 01-namespace.yaml
   - 02-rbac.yaml
-  - 03-secret.yaml
+  # - 03-secret.yaml # Uncomment only if managing secret via file instead of `kubectl create secret`
   - 04-configmap.yaml
   - 05-deployment.yaml
