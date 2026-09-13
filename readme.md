@@ -135,7 +135,12 @@ Deploy an optional standalone GitLab CE instance configured with Google OAuth si
    ```bash
    kubectl get svc -n gitlab gitlab-service
    ```
-4. **Deploy GitLab Runner (Optional CI/CD)**: Create an Instance Runner in GitLab Admin Area (`/admin/runners`), configure the runner token, and deploy:
+4. **Bootstrap Admin Access**: Promote your user account to Administrator instantly with zero extra memory overhead:
+   ```bash
+   kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- \
+     gitlab-psql -d gitlabhq_production -c "UPDATE users SET admin = true WHERE username = '<your_username>';"
+   ```
+5. **Deploy GitLab Runner (Optional CI/CD)**: Create an Instance Runner in GitLab Admin Area (`/admin/runners`), configure the runner token, and deploy:
    ```bash
    kubectl apply -k kubernetes-manifests/gitlab-runner/
    ```

@@ -323,6 +323,43 @@ kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-ctl start pu
 
 ---
 
+#### Method 4: Direct Node Execution via `crictl` (Fallback when `kubectl exec` is Stuck)
+If the K3s control-plane connection to the worker node or the kubelet SPDY/WebSocket proxy is unresponsive or timing out (e.g. during heavy node CPU or memory contention), bypass Kubernetes API proxying entirely by executing directly on the worker node container runtime:
+
+```bash
+# Step 1: SSH directly into the worker node running GitLab
+vagrant ssh debian2
+
+# Step 2: Query the active GitLab container ID
+CONTAINER_ID=$(sudo k3s crictl ps --name gitlab-ce -q)
+
+# Step 3: Promote user directly using gitlab-psql
+sudo k3s crictl exec -it $CONTAINER_ID gitlab-psql -d gitlabhq_production \
+  -c "UPDATE users SET admin = true WHERE username = '<your_username>';"
+
+# Step 4: Verify administrator status
+sudo k3s crictl exec -it $CONTAINER_ID gitlab-psql -d gitlabhq_production \
+  -c "SELECT id, username, email, admin, state FROM users;"
+```
+
+---
+
+#### Method 5: Standard Rails Runner or Rake (When Swap Is Enabled on Worker Node)
+Once a 4 GB swapfile is configured on the worker node (`debian2` as described below), the kernel has sufficient memory headroom (4 GB RAM + 4 GB swap) to absorb Rails runner execution without freezing or needing to pause Puma:
+
+- **Promote existing user via Rails Runner**:
+  ```bash
+  kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rails runner \
+    "user = User.find_by_any_email('your_email@gmail.com') || User.find_by_username('your_username'); user.admin = true; user.save!; puts \"#{user.username} is now an Administrator!\""
+  ```
+
+- **Reset root password via Rake**:
+  ```bash
+  kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- gitlab-rake "gitlab:password:reset[root]"
+  ```
+
+---
+
 #### Homelab Node Tip: Enable Swap on GitLab Worker Node
 To prevent worker node lockups during resource spikes (such as background CI/CD tasks, database migrations, or omnibus reconfigurations), add a 4 GB swapfile to the worker node (`debian2`):
 
