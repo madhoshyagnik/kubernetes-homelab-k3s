@@ -1,0 +1,7 @@
+---
+- name: Deploy Longhorn Distributed Block Storage
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - role: ../roles/longhorn

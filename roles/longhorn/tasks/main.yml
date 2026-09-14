@@ -1,0 +1,9 @@
+---
+- name: Verify host and cluster prerequisites
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Deploy Longhorn using Helm
+  ansible.builtin.import_tasks: install.yml
+
+- name: Configure Longhorn access
+  ansible.builtin.import_tasks: configure.yml

@@ -1,0 +1,65 @@
+name: CI Validation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate-vagrant:
+    name: Validate Vagrantfile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Vagrant
+        run: |
+          wget -q -O /tmp/vagrant.deb https://releases.hashicorp.com/vagrant/2.4.1/vagrant_2.4.1-1_amd64.deb
+          sudo dpkg -i /tmp/vagrant.deb
+
+      - name: Validate Vagrantfile
+        run: vagrant validate --ignore-provider
+
+  lint-yaml:
+    name: Lint YAML Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Run yamllint
+        run: yamllint -c .yamllint.yml .
+
+  lint-ansible:
+    name: Check Ansible Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      - name: Verify Ansible Playbook Syntax
+        run: |
+          for playbook in playbooks/*.yaml; do
+            echo "Checking syntax for $playbook"
+            ansible-playbook -i inventory/inventory.yaml "$playbook" --syntax-check
+          done
