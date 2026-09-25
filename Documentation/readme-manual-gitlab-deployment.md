@@ -375,6 +375,24 @@ K3s supports running alongside swap (`--fail-swap-on=false` by default).
 
 ---
 
+### 5.4 Bootstrapping CI Job Token Signing Key & Work Item Types (Required for Fresh Installs)
+
+On a brand-new GitLab 17.x installation, two internal database components must be seeded to enable GitHub repository imports and GitLab Runner CI/CD execution:
+
+1. **Seed Default Work Item Types** (prevents `Default work item types have not been created yet` error during project or issue imports):
+   ```bash
+   kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- \
+     gitlab-rails runner "Gitlab::DatabaseImporters::WorkItems::BaseTypeImporter.upsert_types"
+   ```
+
+2. **Generate CI Job Token Signing Key** (prevents `RuntimeError: CI job token signing key is not set` / HTTP 500 when GitLab Runner reports job traces):
+   ```bash
+   kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- \
+     gitlab-rails runner "Gitlab::CurrentSettings.update!(ci_job_token_signing_key: OpenSSL::PKey::RSA.generate(2048).to_pem) if Gitlab::CurrentSettings.ci_job_token_signing_key.nil?"
+   ```
+
+---
+
 ## 6. Configuring SMTP Email (Outgoing Notifications)
 
 GitLab sends email alerts for pipeline failures, user mentions, password resets, and merge request updates. Outgoing mail can be configured with any standard SMTP provider (Google Workspace / Gmail, SendGrid, Brevo, Mailgun, Amazon SES).
@@ -585,6 +603,23 @@ Push this file and observe:
 ### Runner Fails with `403 Forbidden` on Job Polling
 - **Cause**: The runner authentication token in `gitlab-runner-secret` is either using the placeholder value or has been revoked in GitLab.
 - **Fix**: Recreate an Instance Runner in `/admin/runners` and update `gitlab-runner-secret` with the new `glrt-...` token, then restart the deployment (`kubectl rollout restart deployment/gitlab-runner -n gitlab-runner`).
+
+### Runner Job Fails with `Appending trace to coordinator... failed code=500`
+- **Cause**: GitLab is missing the CI job token signing key in its database (`RuntimeError: CI job token signing key is not set`).
+- **Fix**: Generate the 2048-bit RSA key inside GitLab Rails:
+  ```bash
+  kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- \
+    gitlab-rails runner "Gitlab::CurrentSettings.update!(ci_job_token_signing_key: OpenSSL::PKey::RSA.generate(2048).to_pem) if Gitlab::CurrentSettings.ci_job_token_signing_key.nil?"
+  ```
+  Then restart the runner pod (`kubectl rollout restart deployment/gitlab-runner -n gitlab-runner`).
+
+### GitHub Importer Fails with `Default work item types have not been created yet`
+- **Cause**: GitLab 16/17+ requires the `work_item_types` table to be seeded before it can map GitHub issues, pull requests, or tasks.
+- **Fix**: Seed the base work item types:
+  ```bash
+  kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- \
+    gitlab-rails runner "Gitlab::DatabaseImporters::WorkItems::BaseTypeImporter.upsert_types"
+  ```
 
 ### SSL Certificate Warnings
 - If you are terminating SSL at an external proxy or Ingress, ensure the proxy passes `X-Forwarded-Proto: https` so GitLab generates valid HTTPS links.
