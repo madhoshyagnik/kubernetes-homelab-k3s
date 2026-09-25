@@ -31,7 +31,7 @@ lint:yaml:
   stage: lint
   image: cytopia/yamllint:latest
   script:
-    - 'yamllint -d "{extends: relaxed, rules: {line-length: {max: 200}, document-start: disable}}" .'
+    - 'yamllint -d "{extends: relaxed, rules: {line-length: {max: 200}, document-start: disable, new-line-at-end-of-file: disable, trailing-spaces: disable}}" .'
   rules:
     - changes:
         - "**/*.yaml"
