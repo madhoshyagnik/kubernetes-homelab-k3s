@@ -59,6 +59,7 @@ flowchart TD
 1. **Functional K3s Cluster**: With MetalLB deployed and operational.
 2. **Google Cloud Account**: Access to [Google Cloud Console](https://console.cloud.google.com/).
 3. **Domain Name / Hostname**: A domain (e.g. `gitlab.madhoshyagnik.com`) or local hostname resolving to your MetalLB LoadBalancer IP.
+4. **Worker Node Sizing**: The worker node designated to host GitLab requires **at least 8 GB RAM (more is preferred)**. Omnibus GitLab bundles PostgreSQL, Redis, Gitaly, Puma, and Sidekiq into a single pod. Node memory below 8 GB can cause node freezes and container OOM kills during repository imports or migrations. Ensure container limits are configured accordingly (e.g. `6800Mi` in [`kubernetes-manifests/gitlab/04-deployment.yaml`](../kubernetes-manifests/gitlab/04-deployment.yaml)).
 
 ---
 
@@ -578,8 +579,8 @@ Push this file and observe:
 - **Fix**: Verify that the Authorized Redirect URI in Google Cloud Console matches `external_url` + `/users/auth/google_oauth2/callback` exactly (including protocol `https://` and port if applicable).
 
 ### Pod CrashLoopBackOff or Out of Memory (OOMKilled)
-- **Cause**: GitLab Omnibus requires at least 2.5 GB of free RAM.
-- **Fix**: Check `kubectl describe pod -n gitlab` to see if the worker node ran out of memory. If necessary, adjust `puma['worker_processes'] = 1` or reduce worker thread concurrency in [`04-deployment.yaml`](../kubernetes-manifests/gitlab/04-deployment.yaml).
+- **Cause**: GitLab Omnibus requires significant memory under active workloads (such as repository imports, migrations, or parallel background jobs). If the hosting worker node has less than 8 GB RAM or the container memory limit is too low, Linux cgroups will OOM-kill the container or freeze the node kubelet.
+- **Fix**: Ensure the hosting worker node has at least 8 GB RAM allocated (e.g. `debian4` allocated with 8192 MB in [`Vagrantfile`](../Vagrantfile)). Verify that [`04-deployment.yaml`](../kubernetes-manifests/gitlab/04-deployment.yaml) allocates a memory limit of at least `6800Mi` (requests: `3072Mi`). If necessary, adjust `puma['worker_processes'] = 1` or reduce worker thread concurrency.
 
 ### Runner Fails with `403 Forbidden` on Job Polling
 - **Cause**: The runner authentication token in `gitlab-runner-secret` is either using the placeholder value or has been revoked in GitLab.
