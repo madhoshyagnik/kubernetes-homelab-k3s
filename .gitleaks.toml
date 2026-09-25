@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allow placeholder tokens used in template manifests and documentation"
+regexes = [
+  '''glrt-YOUR_.*''',
+  '''YOUR_.*''',
+]
+paths = [
+  '''\.vagrant''',
+]
