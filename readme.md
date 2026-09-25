@@ -126,6 +126,9 @@ Access in your browser via your domain (`https://gitlab.madhoshyagnik.com`) or d
 
 Deploy an optional standalone GitLab CE instance configured with Google OAuth single sign-on, along with a native GitLab Runner using the Kubernetes executor for on-demand CI/CD pipelines:
 
+> [!IMPORTANT]
+> **Hardware Requirements**: For GitLab to function reliably without memory starvation or OOM kills (especially during project imports, migrations, and background jobs), the target worker node requires **at least 8 GB RAM (more is preferred)**. Ensure your worker node VM is sized accordingly (e.g. `debian4` allocated with 8 GB RAM in [`Vagrantfile`](./Vagrantfile)) and container limits are set appropriately in [`kubernetes-manifests/gitlab/04-deployment.yaml`](./kubernetes-manifests/gitlab/04-deployment.yaml).
+
 1. **Configure Google OAuth Credentials**: Add your Google Client ID and Secret to [`kubernetes-manifests/gitlab/02-secret.yaml`](./kubernetes-manifests/gitlab/02-secret.yaml) (or provide via `kubectl create secret`).
 2. **Deploy GitLab Server**:
    ```bash
