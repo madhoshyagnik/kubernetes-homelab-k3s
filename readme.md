@@ -126,6 +126,9 @@ Access in your browser via your domain (`https://gitlab.madhoshyagnik.com`) or d
 
 Deploy an optional standalone GitLab CE instance configured with Google OAuth single sign-on, along with a native GitLab Runner using the Kubernetes executor for on-demand CI/CD pipelines:
 
+> [!IMPORTANT]
+> **Hardware Requirements**: For GitLab to function reliably without memory starvation or OOM kills (especially during project imports, migrations, and background jobs), the target worker node requires **at least 8 GB RAM (more is preferred)**. Ensure your worker node VM is sized accordingly (e.g. `debian4` allocated with 8 GB RAM in [`Vagrantfile`](./Vagrantfile)) and container limits are set appropriately in [`kubernetes-manifests/gitlab/04-deployment.yaml`](./kubernetes-manifests/gitlab/04-deployment.yaml).
+
 1. **Configure Google OAuth Credentials**: Add your Google Client ID and Secret to [`kubernetes-manifests/gitlab/02-secret.yaml`](./kubernetes-manifests/gitlab/02-secret.yaml) (or provide via `kubectl create secret`).
 2. **Deploy GitLab Server**:
    ```bash
@@ -140,7 +143,12 @@ Deploy an optional standalone GitLab CE instance configured with Google OAuth si
    kubectl exec -it -n gitlab deployment/gitlab -c gitlab-ce -- \
      gitlab-psql -d gitlabhq_production -c "UPDATE users SET admin = true WHERE username = '<your_username>';"
    ```
-5. **Deploy GitLab Runner (Optional CI/CD)**: Create an Instance Runner in GitLab Admin Area (`/admin/runners`), configure the runner token, and deploy:
+5. **Bootstrap CI Signing Key & Work Item Types**: Seed the default work items (for GitHub imports) and generate the CI job token RSA signing key (for GitLab Runner):
+   ```bash
+   kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- \
+     gitlab-rails runner "Gitlab::DatabaseImporters::WorkItems::BaseTypeImporter.upsert_types; Gitlab::CurrentSettings.update!(ci_job_token_signing_key: OpenSSL::PKey::RSA.generate(2048).to_pem) if Gitlab::CurrentSettings.ci_job_token_signing_key.nil?"
+   ```
+6. **Deploy GitLab Runner (Optional CI/CD)**: Create an Instance Runner in GitLab Admin Area (`/admin/runners`), configure the runner token, and deploy:
    ```bash
    kubectl apply -k kubernetes-manifests/gitlab-runner/
    ```

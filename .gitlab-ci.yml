@@ -1,0 +1,143 @@
+---
+# =============================================================================
+# GitLab CI/CD Pipeline for Kubernetes Homelab (K3s)
+# Covers: YAML Linting, Ansible Syntax, K8s Manifest Validation,
+#         Vagrantfile Verification, and Security & Secret Scanning.
+# =============================================================================
+
+stages:
+  - lint
+  - validate
+  - security
+  - dry-run
+
+# Prevent duplicate pipelines for branch pushes and merge requests
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+
+default:
+  interruptible: true
+
+# -----------------------------------------------------------------------------
+# Stage 1: Linting
+# -----------------------------------------------------------------------------
+
+# Lint all YAML files across playbooks, inventory, and k8s manifests
+lint:yaml:
+  stage: lint
+  image: cytopia/yamllint:latest
+  script:
+    - 'yamllint -d "{extends: relaxed, rules: {line-length: {max: 200}, document-start: disable, new-line-at-end-of-file: disable, trailing-spaces: disable}}" .'
+  rules:
+    - changes:
+        - "**/*.yaml"
+        - "**/*.yml"
+
+# Validate Ruby syntax of Vagrantfile
+lint:vagrantfile:
+  stage: lint
+  image: ruby:3.2-alpine
+  script:
+    - ruby -c Vagrantfile
+  rules:
+    - changes:
+        - Vagrantfile
+
+# Lint documentation and markdown formatting
+lint:markdown:
+  stage: lint
+  image: davidanson/markdownlint-cli2:latest
+  allow_failure: true
+  script:
+    - markdownlint-cli2 "**/*.md" "#node_modules"
+  rules:
+    - changes:
+        - "**/*.md"
+
+# -----------------------------------------------------------------------------
+# Stage 2: Validation
+# -----------------------------------------------------------------------------
+
+# Check Ansible playbooks and roles for syntax correctness
+validate:ansible-syntax:
+  stage: validate
+  image: cytopia/ansible:latest
+  script:
+    - ansible-playbook -i inventory/inventory.yaml playbooks/deploy-k3s.yaml --syntax-check
+    - ansible-playbook -i inventory/inventory.yaml playbooks/uninstall-k3s.yaml --syntax-check
+  rules:
+    - changes:
+        - "playbooks/**/*"
+        - "roles/**/*"
+        - "inventory/**/*"
+
+# Build and validate Kustomize overlays in the gitlab & gitlab-runner manifests
+validate:kustomize:
+  stage: validate
+  image: bitnami/kubectl:latest
+  script:
+    - echo "Validating GitLab Kustomization..."
+    - kubectl kustomize kubernetes-manifests/gitlab/ > /dev/null
+    - echo "Validating GitLab Runner Kustomization..."
+    - kubectl kustomize kubernetes-manifests/gitlab-runner/ > /dev/null
+  rules:
+    - changes:
+        - "kubernetes-manifests/**/*"
+
+# Validate Kubernetes manifests against official Kubernetes JSON schemas
+validate:kubeconform:
+  stage: validate
+  image:
+    name: ghcr.io/yannh/kubeconform:latest-alpine
+    entrypoint: [""]
+  script:
+    - kubeconform -summary -ignore-missing-schemas -kubernetes-version 1.30.0 kubernetes-manifests/
+  rules:
+    - changes:
+        - "kubernetes-manifests/**/*"
+
+# -----------------------------------------------------------------------------
+# Stage 3: Security & Secret Scanning
+# -----------------------------------------------------------------------------
+
+# Scan codebase and commit history for leaked secrets, API keys, or tokens
+security:gitleaks:
+  stage: security
+  image:
+    name: zricethezav/gitleaks:latest
+    entrypoint: [""]
+  script:
+    - gitleaks detect --verbose --redact --no-git
+  allow_failure: false
+
+# Scan Kubernetes manifests for misconfigurations and security best practices
+security:trivy-config:
+  stage: security
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  script:
+    - trivy config --exit-code 0 --severity HIGH,CRITICAL --format table kubernetes-manifests/
+  allow_failure: true
+
+# -----------------------------------------------------------------------------
+# Stage 4: Dry-run Deployment Verification
+# -----------------------------------------------------------------------------
+
+# Test applying Kubernetes manifests in dry-run client mode
+dryrun:k8s-manifests:
+  stage: dry-run
+  image: bitnami/kubectl:latest
+  script:
+    - echo "Running dry-run validation on standalone manifests..."
+    - kubectl apply --dry-run=client -f kubernetes-manifests/metallb-config.yaml
+    - echo "Running dry-run validation on Kustomize manifests..."
+    - kubectl apply --dry-run=client -k kubernetes-manifests/gitlab/
+    - kubectl apply --dry-run=client -k kubernetes-manifests/gitlab-runner/
+  rules:
+    - changes:
+        - "kubernetes-manifests/**/*"

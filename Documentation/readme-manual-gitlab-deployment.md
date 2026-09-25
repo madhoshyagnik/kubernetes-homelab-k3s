@@ -59,6 +59,7 @@ flowchart TD
 1. **Functional K3s Cluster**: With MetalLB deployed and operational.
 2. **Google Cloud Account**: Access to [Google Cloud Console](https://console.cloud.google.com/).
 3. **Domain Name / Hostname**: A domain (e.g. `gitlab.madhoshyagnik.com`) or local hostname resolving to your MetalLB LoadBalancer IP.
+4. **Worker Node Sizing**: The worker node designated to host GitLab requires **at least 8 GB RAM (more is preferred)**. Omnibus GitLab bundles PostgreSQL, Redis, Gitaly, Puma, and Sidekiq into a single pod. Node memory below 8 GB can cause node freezes and container OOM kills during repository imports or migrations. Ensure container limits are configured accordingly (e.g. `6800Mi` in [`kubernetes-manifests/gitlab/04-deployment.yaml`](../kubernetes-manifests/gitlab/04-deployment.yaml)).
 
 ---
 
@@ -374,6 +375,24 @@ K3s supports running alongside swap (`--fail-swap-on=false` by default).
 
 ---
 
+### 5.4 Bootstrapping CI Job Token Signing Key & Work Item Types (Required for Fresh Installs)
+
+On a brand-new GitLab 17.x installation, two internal database components must be seeded to enable GitHub repository imports and GitLab Runner CI/CD execution:
+
+1. **Seed Default Work Item Types** (prevents `Default work item types have not been created yet` error during project or issue imports):
+   ```bash
+   kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- \
+     gitlab-rails runner "Gitlab::DatabaseImporters::WorkItems::BaseTypeImporter.upsert_types"
+   ```
+
+2. **Generate CI Job Token Signing Key** (prevents `RuntimeError: CI job token signing key is not set` / HTTP 500 when GitLab Runner reports job traces):
+   ```bash
+   kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- \
+     gitlab-rails runner "Gitlab::CurrentSettings.update!(ci_job_token_signing_key: OpenSSL::PKey::RSA.generate(2048).to_pem) if Gitlab::CurrentSettings.ci_job_token_signing_key.nil?"
+   ```
+
+---
+
 ## 6. Configuring SMTP Email (Outgoing Notifications)
 
 GitLab sends email alerts for pipeline failures, user mentions, password resets, and merge request updates. Outgoing mail can be configured with any standard SMTP provider (Google Workspace / Gmail, SendGrid, Brevo, Mailgun, Amazon SES).
@@ -578,12 +597,29 @@ Push this file and observe:
 - **Fix**: Verify that the Authorized Redirect URI in Google Cloud Console matches `external_url` + `/users/auth/google_oauth2/callback` exactly (including protocol `https://` and port if applicable).
 
 ### Pod CrashLoopBackOff or Out of Memory (OOMKilled)
-- **Cause**: GitLab Omnibus requires at least 2.5 GB of free RAM.
-- **Fix**: Check `kubectl describe pod -n gitlab` to see if the worker node ran out of memory. If necessary, adjust `puma['worker_processes'] = 1` or reduce worker thread concurrency in [`04-deployment.yaml`](../kubernetes-manifests/gitlab/04-deployment.yaml).
+- **Cause**: GitLab Omnibus requires significant memory under active workloads (such as repository imports, migrations, or parallel background jobs). If the hosting worker node has less than 8 GB RAM or the container memory limit is too low, Linux cgroups will OOM-kill the container or freeze the node kubelet.
+- **Fix**: Ensure the hosting worker node has at least 8 GB RAM allocated (e.g. `debian4` allocated with 8192 MB in [`Vagrantfile`](../Vagrantfile)). Verify that [`04-deployment.yaml`](../kubernetes-manifests/gitlab/04-deployment.yaml) allocates a memory limit of at least `6800Mi` (requests: `3072Mi`). If necessary, adjust `puma['worker_processes'] = 1` or reduce worker thread concurrency.
 
 ### Runner Fails with `403 Forbidden` on Job Polling
 - **Cause**: The runner authentication token in `gitlab-runner-secret` is either using the placeholder value or has been revoked in GitLab.
 - **Fix**: Recreate an Instance Runner in `/admin/runners` and update `gitlab-runner-secret` with the new `glrt-...` token, then restart the deployment (`kubectl rollout restart deployment/gitlab-runner -n gitlab-runner`).
+
+### Runner Job Fails with `Appending trace to coordinator... failed code=500`
+- **Cause**: GitLab is missing the CI job token signing key in its database (`RuntimeError: CI job token signing key is not set`).
+- **Fix**: Generate the 2048-bit RSA key inside GitLab Rails:
+  ```bash
+  kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- \
+    gitlab-rails runner "Gitlab::CurrentSettings.update!(ci_job_token_signing_key: OpenSSL::PKey::RSA.generate(2048).to_pem) if Gitlab::CurrentSettings.ci_job_token_signing_key.nil?"
+  ```
+  Then restart the runner pod (`kubectl rollout restart deployment/gitlab-runner -n gitlab-runner`).
+
+### GitHub Importer Fails with `Default work item types have not been created yet`
+- **Cause**: GitLab 16/17+ requires the `work_item_types` table to be seeded before it can map GitHub issues, pull requests, or tasks.
+- **Fix**: Seed the base work item types:
+  ```bash
+  kubectl exec -n gitlab deployment/gitlab -c gitlab-ce -- \
+    gitlab-rails runner "Gitlab::DatabaseImporters::WorkItems::BaseTypeImporter.upsert_types"
+  ```
 
 ### SSL Certificate Warnings
 - If you are terminating SSL at an external proxy or Ingress, ensure the proxy passes `X-Forwarded-Proto: https` so GitLab generates valid HTTPS links.
